@@ -16,15 +16,15 @@ Beanspruchungs-Dimension:
   8) Allgemeiner Beanspruchungszustand      (0 = gering, 6 = hoch)
 
 - Wird nur das Datum (YYYY-MM-DD) eingegeben, wird automatisch die aktuelle Uhrzeit (HH:MM:SS) angehängt.
-- Nach dem Speichern wird überprüft, ob die heutigen Subskalenwerte (basierend auf den gegenüberliegenden Items)
+- Nach dem Speichern wird überprüft, ob die heutigen Subskalenwerte (basierend auf gegenüberliegenden Items)
   in mindestens einer Subskala um ≥ 2 Punkte unter dem 7-Tages-Durchschnitt liegen – es werden nur negative
   Veränderungen angezeigt.
 - Zur Auswertung gibt es zwei Diagramme:
    1. Einzelitems: Zeitlicher Verlauf aller 8 Items.
-   2. Subskalen: Gegenüberliegende Items werden zusammengefasst (Beanspruchungswerte invertiert mit "6 - Wert")
-- In beiden Diagrammen ist die Y-Achse fix auf 0 bis 7 gesetzt.
+   2. Subskalen: Gegenüberliegende Items werden zusammengefasst (Beanspruchungswerte werden mit "6 - Wert" invertiert).
+- In beiden Diagrammen ist die Y-Achse fix von 0 bis 7 gesetzt.
 - Jeder Benutzer hat über die Login-/Registrierungsfunktion seine eigenen Einträge.
-- Zusätzlich gibt es einen Löschdialog, in dem du Einträge selektiv löschen kannst.
+- Zusätzlich gibt es einen Löschdialog, in dem Einträge selektiv gelöscht werden können.
 """
 
 from flask import Flask, render_template, request, redirect, url_for, flash, session
@@ -37,7 +37,7 @@ import base64
 import os
 
 app = Flask(__name__)
-app.secret_key = "dein_geheimer_schluessel"  # Am besten als Environment Variable setzen
+app.secret_key = "dein_geheimer_schluessel"  # Bitte als Environment Variable setzen
 DB_FILE = "keb.db"
 
 def get_db_connection():
@@ -47,7 +47,7 @@ def get_db_connection():
 
 def init_db():
     conn = get_db_connection()
-    # Tabelle für KEB-Einträge mit user_id
+    # Tabelle für KEB-Einträge, jetzt mit user_id
     conn.execute("""
         CREATE TABLE IF NOT EXISTS keb (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -127,7 +127,7 @@ def add_entry():
     return render_template("add.html")
 
 def check_negative_deviation(datum_str, k, m, e, a, mb, am, eu, ab):
-    # Heutige Subskalenwerte berechnen
+    # Berechne heutige Subskalenwerte
     s1_today = (k + (6 - mb)) / 2
     s2_today = (m + (6 - am)) / 2
     s3_today = (e + (6 - eu)) / 2
