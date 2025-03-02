@@ -22,7 +22,7 @@ Beanspruchungs-Dimension:
 - Zur Auswertung gibt es zwei Diagramme:
    1. Einzelitems: Zeitlicher Verlauf aller 8 Items.
    2. Subskalen: Gegenüberliegende Items werden zusammengefasst (Beanspruchungswerte werden mit "6 - Wert" invertiert).
-- In beiden Diagrammen ist die Y-Achse fix von 0 bis 7 gesetzt.
+- In beiden Diagrammen ist die Y-Achse fix auf 0 bis 7 gesetzt.
 - Jeder Benutzer hat über die Login-/Registrierungsfunktion seine eigenen Einträge.
 - Zusätzlich gibt es einen Löschdialog, in dem Einträge selektiv gelöscht werden können.
 """
@@ -37,7 +37,7 @@ import base64
 import os
 
 app = Flask(__name__)
-app.secret_key = "dein_geheimer_schluessel"  # Bitte als Environment Variable setzen
+app.secret_key = "dein_geheimer_schluessel"  # Am besten als Environment Variable setzen
 DB_FILE = "keb.db"
 
 def get_db_connection():
@@ -77,40 +77,6 @@ def init_db():
 
 init_db()
 
-@app.route('/add', methods=["GET", "POST"])
-def add_entry():
-    if "user_id" not in session:
-        flash("Bitte melde dich an.", "danger")
-        return redirect(url_for("login"))
-    if request.method == "POST":
-        # Datum und Uhrzeit werden automatisch gesetzt:
-        datum = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        try:
-            k_leistung = float(request.form["k_leistung"])
-            m_leistung = float(request.form["m_leistung"])
-            e_ausgeg = float(request.form["e_ausgeg"])
-            a_erhol = float(request.form["a_erhol"])
-            musk_beans = float(request.form["musk_beans"])
-            aktiv_mangel = float(request.form["aktiv_mangel"])
-            e_unausg = float(request.form["e_unausg"])
-            a_beans = float(request.form["a_beans"])
-        except ValueError:
-            flash("Bitte alle Werte als Zahl (zwischen 0 und 6) eingeben!", "danger")
-            return redirect(url_for("add_entry"))
-        conn = get_db_connection()
-        conn.execute("""
-            INSERT INTO keb (datum, k_leistung, m_leistung, e_ausgeg, a_erhol,
-                             musk_beans, aktiv_mangel, e_unausg, a_beans, user_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (datum, k_leistung, m_leistung, e_ausgeg, a_erhol, musk_beans, aktiv_mangel, e_unausg, a_beans, session["user_id"]))
-        conn.commit()
-        conn.close()
-        check_negative_deviation(datum, k_leistung, m_leistung, e_ausgeg, a_erhol, musk_beans, aktiv_mangel, e_unausg, a_beans)
-        flash("Eintrag erfolgreich hinzugefügt!", "success")
-        return redirect(url_for("index"))
-    return render_template("add.html")
-
-
 @app.route('/')
 def index():
     if "user_id" not in session:
@@ -126,10 +92,10 @@ def add_entry():
         flash("Bitte melde dich an.", "danger")
         return redirect(url_for("login"))
     if request.method == "POST":
-        datum = request.form["datum"].strip()
-        # Falls nur Datum eingegeben (10 Zeichen), Uhrzeit anhängen
-        if len(datum) == 10:
-            datum = datum + " " + datetime.datetime.now().strftime("%H:%M:%S")
+        datum = request.form.get("datum", "").strip()
+        # Falls das Datum-Feld nicht gesendet wird, setze Datum automatisch
+        if not datum or len(datum) == 10:
+            datum = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         try:
             datetime.datetime.strptime(datum, "%Y-%m-%d %H:%M:%S")
         except ValueError:
