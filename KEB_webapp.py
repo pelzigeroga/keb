@@ -1,19 +1,34 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-KEB-App Web Version – Mit Schiebereglern (HTML Range Inputs) und moderner Oberfläche
+KEB-App mit Schiebereglern – 8 Items (7-stufige Likert-Skala: 0 bis 6, Datum mit Zeit, Login/Registrierung)
 
-- 8 Items (7-stufige Likert-Skala von 0 bis 6, neutral = 3)
-- Datum und Uhrzeit werden automatisch erfasst.
-- Es gibt zwei Auswertungsdiagramme:
-   1. Einzelitems (zeitlicher Verlauf aller 8 Items)
-   2. Subskalen (gegenüberliegende Items werden zusammengefasst, Beanspruchung wird mit "6 - Wert" invertiert)
-- Die Y-Achse in den Diagrammen ist fix auf 0 bis 7 gesetzt.
-- Negative Abweichungen (≥ 2 Punkte unter dem 7-Tages-Durchschnitt) werden angezeigt.
-- Ein Löschdialog ermöglicht das selektive Entfernen von Einträgen.
+Erholungs-Dimension:
+  1) Körperliche Leistungsfähigkeit        (0 = am schlechtesten: rot, 6 = am besten: grün; 3 = neutral, gelb)
+  2) Mentale Leistungsfähigkeit            (0 = schlecht, 6 = gut)
+  3) Emotionale Ausgeglichenheit           (0 = schlecht, 6 = gut)
+  4) Allgemeiner Erholungszustand          (0 = schlecht, 6 = gut)
+
+Beanspruchungs-Dimension:
+  5) Muskuläre Beanspruchung               (0 = am besten: grün, 6 = am schlechtesten: rot; 3 = neutral, gelb)
+  6) Aktivierungsmangel                    (0 = gering, 6 = hoch)
+  7) Emotionale Unausgeglichenheit         (0 = gering, 6 = hoch)
+  8) Allgemeiner Beanspruchungszustand      (0 = gering, 6 = hoch)
+
+- Wird nur das Datum (YYYY-MM-DD) eingegeben, wird automatisch die aktuelle Uhrzeit (HH:MM:SS) angehängt.
+- Nach dem Speichern wird überprüft, ob die heutigen Subskalenwerte (basierend auf den gegenüberliegenden Items)
+  in mindestens einer Subskala um ≥ 2 Punkte unter dem 7-Tages-Durchschnitt liegen – es werden nur negative
+  Veränderungen angezeigt.
+- Zur Auswertung gibt es zwei Diagramme:
+   1. Einzelitems: Zeitlicher Verlauf aller 8 Items.
+   2. Subskalen: Gegenüberliegende Items werden zusammengefasst (Beanspruchungswerte invertiert mit "6 - Wert")
+- In beiden Diagrammen ist die Y-Achse fix auf 0 bis 7 gesetzt.
+- Jeder Benutzer hat über die Login-/Registrierungsfunktion seine eigenen Einträge.
+- Zusätzlich gibt es einen Löschdialog, in dem du Einträge selektiv löschen kannst.
 """
 
-from flask import Flask, render_template, request, redirect, url_for, flash
+from flask import Flask, render_template, request, redirect, url_for, flash, session
+from werkzeug.security import generate_password_hash, check_password_hash
 import sqlite3
 import datetime
 import matplotlib.pyplot as plt
@@ -22,7 +37,7 @@ import base64
 import os
 
 app = Flask(__name__)
-app.secret_key = "dein_geheimer_schluessel"
+app.secret_key = "dein_geheimer_schluessel"  # Am besten als Environment Variable setzen
 DB_FILE = "keb.db"
 
 def get_db_connection():
@@ -32,6 +47,7 @@ def get_db_connection():
 
 def init_db():
     conn = get_db_connection()
+    # Tabelle für KEB-Einträge mit user_id
     conn.execute("""
         CREATE TABLE IF NOT EXISTS keb (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,7 +59,17 @@ def init_db():
             musk_beans REAL,
             aktiv_mangel REAL,
             e_unausg REAL,
-            a_beans REAL
+            a_beans REAL,
+            user_id INTEGER,
+            FOREIGN KEY(user_id) REFERENCES users(id)
+        )
+    """)
+    # Tabelle für Benutzer
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL
         )
     """)
     conn.commit()
@@ -53,16 +79,28 @@ init_db()
 
 @app.route('/')
 def index():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
     conn = get_db_connection()
-    entries = conn.execute("SELECT * FROM keb ORDER BY datum DESC").fetchall()
+    entries = conn.execute("SELECT * FROM keb WHERE user_id = ? ORDER BY datum DESC", (session["user_id"],)).fetchall()
     conn.close()
     return render_template("index.html", entries=entries)
 
 @app.route('/add', methods=["GET", "POST"])
 def add_entry():
+    if "user_id" not in session:
+        flash("Bitte melde dich an.", "danger")
+        return redirect(url_for("login"))
     if request.method == "POST":
-        # Datum und Uhrzeit automatisch erfassen:
-        datum = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        datum = request.form["datum"].strip()
+        # Falls nur Datum eingegeben (10 Zeichen), Uhrzeit anhängen
+        if len(datum) == 10:
+            datum = datum + " " + datetime.datetime.now().strftime("%H:%M:%S")
+        try:
+            datetime.datetime.strptime(datum, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            flash("Datum muss im Format YYYY-MM-DD oder YYYY-MM-DD HH:MM:SS sein!", "danger")
+            return redirect(url_for("add_entry"))
         try:
             k_leistung = float(request.form["k_leistung"])
             m_leistung = float(request.form["m_leistung"])
@@ -73,14 +111,14 @@ def add_entry():
             e_unausg = float(request.form["e_unausg"])
             a_beans = float(request.form["a_beans"])
         except ValueError:
-            flash("Bitte alle Werte als Zahl eingeben.", "danger")
+            flash("Bitte alle Werte als Zahl (zwischen 0 und 6) eingeben!", "danger")
             return redirect(url_for("add_entry"))
         conn = get_db_connection()
         conn.execute("""
             INSERT INTO keb (datum, k_leistung, m_leistung, e_ausgeg, a_erhol,
-                             musk_beans, aktiv_mangel, e_unausg, a_beans)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (datum, k_leistung, m_leistung, e_ausgeg, a_erhol, musk_beans, aktiv_mangel, e_unausg, a_beans))
+                             musk_beans, aktiv_mangel, e_unausg, a_beans, user_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (datum, k_leistung, m_leistung, e_ausgeg, a_erhol, musk_beans, aktiv_mangel, e_unausg, a_beans, session["user_id"]))
         conn.commit()
         conn.close()
         check_negative_deviation(datum, k_leistung, m_leistung, e_ausgeg, a_erhol, musk_beans, aktiv_mangel, e_unausg, a_beans)
@@ -89,7 +127,7 @@ def add_entry():
     return render_template("add.html")
 
 def check_negative_deviation(datum_str, k, m, e, a, mb, am, eu, ab):
-    # Berechne heutige Subskalenwerte:
+    # Heutige Subskalenwerte berechnen
     s1_today = (k + (6 - mb)) / 2
     s2_today = (m + (6 - am)) / 2
     s3_today = (e + (6 - eu)) / 2
@@ -108,8 +146,8 @@ def check_negative_deviation(datum_str, k, m, e, a, mb, am, eu, ab):
         SELECT k_leistung, m_leistung, e_ausgeg, a_erhol,
                musk_beans, aktiv_mangel, e_unausg, a_beans
         FROM keb
-        WHERE datum < ? AND datum >= ?
-    """, (datum_str, start_date.strftime("%Y-%m-%d"))).fetchall()
+        WHERE datum < ? AND datum >= ? AND user_id = ?
+    """, (datum_str, start_date.strftime("%Y-%m-%d"), session["user_id"])).fetchall()
     conn.close()
     if not rows:
         return
@@ -136,15 +174,18 @@ def check_negative_deviation(datum_str, k, m, e, a, mb, am, eu, ab):
     if messages:
         flash("Negative Abweichungen festgestellt:<br>" + "<br>".join(messages), "warning")
 
-@app.route('/plot')
+@app.route('/plot_chart')
 def plot_chart():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
     conn = get_db_connection()
     rows = conn.execute("""
         SELECT datum, k_leistung, m_leistung, e_ausgeg, a_erhol,
                musk_beans, aktiv_mangel, e_unausg, a_beans
         FROM keb
+        WHERE user_id = ?
         ORDER BY datum
-    """).fetchall()
+    """, (session["user_id"],)).fetchall()
     conn.close()
     if not rows:
         flash("Keine Daten vorhanden.", "danger")
@@ -191,13 +232,16 @@ def plot_chart():
 
 @app.route('/plot_subscales')
 def plot_subscales():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
     conn = get_db_connection()
     rows = conn.execute("""
         SELECT datum, k_leistung, m_leistung, e_ausgeg, a_erhol,
                musk_beans, aktiv_mangel, e_unausg, a_beans
         FROM keb
+        WHERE user_id = ?
         ORDER BY datum
-    """).fetchall()
+    """, (session["user_id"],)).fetchall()
     conn.close()
     if not rows:
         flash("Keine Daten vorhanden.", "danger")
@@ -248,19 +292,67 @@ def plot_subscales():
 
 @app.route('/delete', methods=["GET", "POST"])
 def delete_entries():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
     conn = get_db_connection()
     if request.method == "POST":
         ids = request.form.getlist("delete")
         for entry_id in ids:
-            conn.execute("DELETE FROM keb WHERE id = ?", (entry_id,))
+            conn.execute("DELETE FROM keb WHERE id = ? AND user_id = ?", (entry_id, session["user_id"]))
         conn.commit()
         conn.close()
         flash("Ausgewählte Einträge wurden gelöscht.", "success")
         return redirect(url_for("index"))
     else:
-        entries = conn.execute("SELECT * FROM keb ORDER BY datum DESC").fetchall()
+        entries = conn.execute("SELECT * FROM keb WHERE user_id = ? ORDER BY datum DESC", (session["user_id"],)).fetchall()
         conn.close()
         return render_template("delete.html", entries=entries)
+
+@app.route('/login', methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        username = request.form["username"].strip()
+        password = request.form["password"]
+        conn = get_db_connection()
+        user = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+        conn.close()
+        if user and check_password_hash(user["password"], password):
+            session["user_id"] = user["id"]
+            session["username"] = user["username"]
+            flash("Erfolgreich angemeldet.", "success")
+            return redirect(url_for("index"))
+        else:
+            flash("Ungültiger Benutzername oder Passwort.", "danger")
+            return redirect(url_for("login"))
+    return render_template("login.html")
+
+@app.route('/register', methods=["GET", "POST"])
+def register():
+    if request.method == "POST":
+        username = request.form["username"].strip()
+        password = request.form["password"]
+        if not username or not password:
+            flash("Bitte Benutzername und Passwort angeben.", "danger")
+            return redirect(url_for("register"))
+        hashed_pw = generate_password_hash(password)
+        conn = get_db_connection()
+        try:
+            conn.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, hashed_pw))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            flash("Benutzername bereits vergeben.", "danger")
+            conn.close()
+            return redirect(url_for("register"))
+        conn.close()
+        flash("Registrierung erfolgreich! Bitte melde dich an.", "success")
+        return redirect(url_for("login"))
+    return render_template("register.html")
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    flash("Erfolgreich abgemeldet.", "success")
+    return redirect(url_for("login"))
 
 if __name__ == '__main__':
     app.run(debug=True)
